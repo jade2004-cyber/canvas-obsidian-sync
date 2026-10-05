@@ -1,0 +1,17 @@
+{
+  "base_url": "https://canvas.example.edu",
+  "keychain_service": "canvas-obsidian-sync",
+  "vault_path": "/Users/YOU/Documents/Obsidian Vault/2026 Semester A",
+  "max_file_size_mb": 500,
+  "archive_removed": true,
+  "courses": {
+    "COURSE101": {
+      "canvas_id": 123456,
+      "vault_directory": "COURSE101"
+    },
+    "COURSE102": {
+      "canvas_id": 234567,
+      "vault_directory": "COURSE102"
+    }
+  }
+}

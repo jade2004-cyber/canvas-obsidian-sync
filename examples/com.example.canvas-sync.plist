@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.example.canvas-sync.course101</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/ABSOLUTE/PATH/canvas_scheduled_sync.py</string>
+    <string>--config</string>
+    <string>/ABSOLUTE/PATH/canvas_courses.json</string>
+    <string>--course</string>
+    <string>COURSE101</string>
+    <string>--start-date</string>
+    <string>2026-08-31</string>
+    <string>--end-date</string>
+    <string>2026-11-28</string>
+  </array>
+
+  <!-- Example: Monday at 08:15 -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key><integer>1</integer>
+    <key>Hour</key><integer>8</integer>
+    <key>Minute</key><integer>15</integer>
+  </dict>
+
+  <key>ProcessType</key><string>Background</string>
+  <key>LowPriorityIO</key><true/>
+  <key>Nice</key><integer>10</integer>
+  <key>StandardOutPath</key><string>/Users/YOU/Library/Logs/canvas-sync.log</string>
+  <key>StandardErrorPath</key><string>/Users/YOU/Library/Logs/canvas-sync-error.log</string>
+</dict>
+</plist>

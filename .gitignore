@@ -1,0 +1,13 @@
+canvas_courses.json
+*.log
+.DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.canvas-sync-state.json
+Canvas/
+.venv/
+venv/
