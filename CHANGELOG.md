@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+
+- Add an optional layout mode that syncs directly into existing course folders
+- Preserve existing file paths and layout settings during reconfiguration
+- Avoid archiving a file while another current Canvas ID still references it
+- Keep the original `Canvas/` layout as the backward-compatible default
+
 ## 0.2.0
 
 - Add double-click install, update, configure, status, diagnostics, sync-now, and uninstall commands

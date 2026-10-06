@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Read-only Canvas-to-Obsidian synchronizer for course materials.
 
-The script only performs HTTP GET requests. It downloads Canvas files into the
-course's Canvas/ tree and generates Canvas/索引.md. The API token is read from
-macOS Keychain and is never written to disk or included in output.
+The script only performs HTTP GET requests. By default it downloads files into
+the course's Canvas/ tree; an optional layout config can target existing course
+folders instead. The API token is read from macOS Keychain and is never written
+to disk or included in output.
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = SCRIPT_DIR / "canvas_courses.json"
 STATE_NAME = ".canvas-sync-state.json"
 INDEX_NAME = "索引.md"
-USER_AGENT = "canvas-obsidian-read-only-sync/0.2.0"
+USER_AGENT = "canvas-obsidian-read-only-sync/0.2.1"
 LOCAL_TZ = dt.datetime.now().astimezone().tzinfo or dt.timezone.utc
 MAX_ATTEMPTS = 5
 RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
@@ -54,6 +55,13 @@ class Course:
     code: str
     canvas_id: int
     vault_directory: str
+    sync_directory: str = "Canvas"
+    material_directory: str = "课程资料"
+    week_directory: str = ""
+    index_path: str = INDEX_NAME
+    archive_directory: str = "_Archived"
+    preserve_existing_paths: bool = False
+    generate_index: bool = True
 
 
 class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -400,10 +408,21 @@ def safe_canvas_path(canvas_root: Path, relative: Path) -> Path:
     return canvas_root / relative
 
 
+def safe_config_path(value: str, label: str) -> Path:
+    path = Path(value)
+    if path.is_absolute() or ".." in path.parts:
+        raise SyncError(f"Unsafe {label}: {value}")
+    return path
+
+
 def archive_file(
-    canvas_root: Path, source: Path, relative: Path, canvas_id: int
+    canvas_root: Path,
+    source: Path,
+    relative: Path,
+    canvas_id: int,
+    archive_directory: Path = Path("_Archived"),
 ) -> Path:
-    archive_root = canvas_root / "_Archived" / dt.date.today().isoformat()
+    archive_root = canvas_root / archive_directory / dt.date.today().isoformat()
     destination = archive_root / relative
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.exists():
@@ -509,6 +528,8 @@ def render_index(
     assignments: list[dict[str, Any]],
     announcements: list[dict[str, Any]],
     synced_at: dt.datetime,
+    material_directory: Path = Path("课程资料"),
+    week_directory: Path = Path(),
 ) -> str:
     lines = [
         "---",
@@ -524,7 +545,7 @@ def render_index(
     ]
 
     sections: list[tuple[str, list[Path]]] = []
-    material_dir = canvas_root / "课程资料"
+    material_dir = canvas_root / material_directory
     material_files = (
         sorted(
             (p for p in material_dir.rglob("*") if p.is_file()),
@@ -534,8 +555,9 @@ def render_index(
         else []
     )
     sections.append(("课程资料", material_files))
+    week_root = canvas_root / week_directory
     week_dirs = sorted(
-        (p for p in canvas_root.glob("Week [0-9][0-9]") if p.is_dir()),
+        (p for p in week_root.glob("Week [0-9][0-9]") if p.is_dir()),
         key=lambda p: p.name,
     )
     sections.extend(
@@ -686,7 +708,14 @@ def sync_course(
     course_dir = vault / course.vault_directory
     if not course_dir.is_dir():
         raise SyncError(f"Course directory does not exist: {course_dir}")
-    canvas_root = course_dir / "Canvas"
+    sync_directory = safe_config_path(course.sync_directory, "sync_directory")
+    material_directory = safe_config_path(
+        course.material_directory, "material_directory"
+    )
+    week_directory = safe_config_path(course.week_directory, "week_directory")
+    index_path = safe_config_path(course.index_path, "index_path")
+    archive_directory = safe_config_path(course.archive_directory, "archive_directory")
+    canvas_root = course_dir / sync_directory
     state_path = canvas_root / STATE_NAME
     state = load_state(state_path)
     old_files = state.setdefault("files", {})
@@ -739,13 +768,23 @@ def sync_course(
         )
         folder_path = folder_paths.get(int(remote.get("folder_id") or 0), "")
         section = choose_section(filename, folder_path, module_names.get(file_id, []))
-        directory = canvas_root / section
+        directory = (
+            canvas_root / material_directory
+            if section == "课程资料"
+            else canvas_root / week_directory / section
+        )
         previous = old_files.get(str(file_id), {})
         previous_path = Path(previous.get("path", "")) if previous.get("path") else None
         previous_full = (
             safe_canvas_path(canvas_root, previous_path) if previous_path else None
         )
-        destination = directory / filename
+        destination = (
+            previous_full
+            if course.preserve_existing_paths
+            and previous_full is not None
+            and previous_full.is_file()
+            else directory / filename
+        )
         if destination.exists() and destination != previous_full:
             destination = unique_destination(directory, filename, file_id)
         relative_path = destination.relative_to(canvas_root).as_posix()
@@ -847,7 +886,13 @@ def sync_course(
             and previous_full.is_file()
             and previous_full != destination
         ):
-            archive_file(canvas_root, previous_full, previous_path, file_id)
+            archive_file(
+                canvas_root,
+                previous_full,
+                previous_path,
+                file_id,
+                archive_directory,
+            )
             stats["archived"] += 1
         next_state["files"][str(file_id)] = {
             "display_name": filename,
@@ -865,6 +910,12 @@ def sync_course(
             continue
         previous_path = Path(previous_path_text)
         previous_full = safe_canvas_path(canvas_root, previous_path)
+        if any(
+            entry.get("path") == previous_path_text
+            for entry in next_state["files"].values()
+            if isinstance(entry, dict)
+        ):
+            continue
         if not previous_full.is_file():
             continue
         if not quiet:
@@ -876,7 +927,13 @@ def sync_course(
                     archive_id = int(file_id_text)
                 except ValueError:
                     archive_id = 0
-                archive_file(canvas_root, previous_full, previous_path, archive_id)
+                archive_file(
+                    canvas_root,
+                    previous_full,
+                    previous_path,
+                    archive_id,
+                    archive_directory,
+                )
             stats["archived"] += 1
         else:
             next_state["files"][file_id_text] = previous
@@ -884,15 +941,20 @@ def sync_course(
     if not dry_run:
         canvas_root.mkdir(parents=True, exist_ok=True)
         write_json(state_path, next_state)
-        index_text = render_index(
-            course,
-            base_url,
-            canvas_root,
-            assignments,
-            announcements,
-            dt.datetime.now(dt.timezone.utc),
-        )
-        (canvas_root / INDEX_NAME).write_text(index_text, encoding="utf-8")
+        if course.generate_index:
+            index_text = render_index(
+                course,
+                base_url,
+                canvas_root,
+                assignments,
+                announcements,
+                dt.datetime.now(dt.timezone.utc),
+                material_directory,
+                week_directory,
+            )
+            index_full = canvas_root / index_path
+            index_full.parent.mkdir(parents=True, exist_ok=True)
+            index_full.write_text(index_text, encoding="utf-8")
     return stats
 
 
@@ -934,11 +996,44 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         config = load_config(args.config)
+        layout = config.get("layout", {})
         configured = {
             code.upper(): Course(
                 code=code.upper(),
                 canvas_id=int(details["canvas_id"]),
                 vault_directory=str(details["vault_directory"]),
+                sync_directory=str(
+                    details.get(
+                        "sync_directory", layout.get("sync_directory", "Canvas")
+                    )
+                ),
+                material_directory=str(
+                    details.get(
+                        "material_directory",
+                        layout.get("material_directory", "课程资料"),
+                    )
+                ),
+                week_directory=str(
+                    details.get("week_directory", layout.get("week_directory", ""))
+                ),
+                index_path=str(
+                    details.get("index_path", layout.get("index_path", INDEX_NAME))
+                ),
+                archive_directory=str(
+                    details.get(
+                        "archive_directory",
+                        layout.get("archive_directory", "_Archived"),
+                    )
+                ),
+                preserve_existing_paths=bool(
+                    details.get(
+                        "preserve_existing_paths",
+                        layout.get("preserve_existing_paths", False),
+                    )
+                ),
+                generate_index=bool(
+                    details.get("generate_index", layout.get("generate_index", True))
+                ),
             )
             for code, details in config["courses"].items()
         }

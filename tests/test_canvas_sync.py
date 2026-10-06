@@ -110,6 +110,10 @@ class CanvasSyncTests(unittest.TestCase):
         with self.assertRaises(canvas_sync.SyncError):
             canvas_sync.safe_canvas_path(Path("/tmp/vault"), Path("../secret"))
 
+    def test_safe_config_path_rejects_parent_traversal(self):
+        with self.assertRaises(canvas_sync.SyncError):
+            canvas_sync.safe_config_path("../secret", "sync_directory")
+
     def test_archive_file_preserves_local_copy(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -308,6 +312,49 @@ class CanvasSyncTests(unittest.TestCase):
             )
             self.assertEqual(setup.read_json(config_path)["courses"], config["courses"])
             self.assertTrue(launchctl.called)
+
+    def test_reconfigure_preserves_existing_layout(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "COURSE101").mkdir()
+            layout = {
+                "sync_directory": ".",
+                "material_directory": "01 课程信息",
+                "week_directory": "02 每周课件",
+                "archive_directory": ".canvas-archive",
+                "preserve_existing_paths": True,
+                "generate_index": False,
+            }
+            existing_config = {
+                "base_url": "https://example.test",
+                "keychain_service": "test-service",
+                "vault_path": str(root),
+                "max_file_size_mb": 500,
+                "layout": layout,
+                "courses": {
+                    "COURSE101": {
+                        "canvas_id": 123,
+                        "vault_directory": "COURSE101",
+                    }
+                },
+            }
+            existing_manifest = {
+                "start_date": "2030-01-01",
+                "end_date": "2030-04-01",
+                "lead_minutes": 45,
+                "class_times": {"COURSE101": [[1, 9, 0]]},
+            }
+
+            with (
+                mock.patch(
+                    "setup.prompt",
+                    side_effect=lambda _label, default=None: default or "",
+                ),
+                mock.patch("setup.prompt_bool", return_value=True),
+            ):
+                config, *_ = setup.collect_settings(existing_config, existing_manifest)
+
+            self.assertEqual(config["layout"], layout)
 
     def test_sync_moves_renamed_file_without_downloading(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -510,6 +557,136 @@ class CanvasSyncTests(unittest.TestCase):
             self.assertEqual(allowed["moved"], 0)
             self.assertEqual(local_file.read_bytes(), b"new")
             client.download.assert_called_once()
+
+    def test_sync_supports_existing_course_layout_without_canvas_folder(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            vault = root / "vault"
+            course_dir = vault / "COURSE101"
+            existing = course_dir / "02 每周课件" / "Week 01" / "slides.pdf"
+            existing.parent.mkdir(parents=True)
+            existing.write_bytes(b"old")
+            canvas_sync.write_json(
+                course_dir / canvas_sync.STATE_NAME,
+                {
+                    "files": {
+                        "1": {
+                            "path": "02 每周课件/Week 01/slides.pdf",
+                            "display_name": "slides.pdf",
+                            "updated_at": "2029-01-01T00:00:00Z",
+                            "size": 3,
+                        }
+                    }
+                },
+            )
+            course = canvas_sync.Course(
+                "COURSE101",
+                123,
+                "COURSE101",
+                sync_directory=".",
+                material_directory="01 课程信息",
+                week_directory="02 每周课件",
+                preserve_existing_paths=True,
+                generate_index=False,
+            )
+            data = (
+                {"name": "Course"},
+                [
+                    {
+                        "id": 1,
+                        "display_name": "renamed-slides.pdf",
+                        "updated_at": "2030-01-01T00:00:00Z",
+                        "size": 3,
+                        "folder_id": 10,
+                        "url": "https://example.test/file",
+                    }
+                ],
+                [{"id": 10, "full_name": "Week 01"}],
+                [],
+                [],
+                [],
+            )
+            client = mock.Mock()
+
+            def download(_url, destination, **_kwargs):
+                destination.write_bytes(b"new")
+                return "newhash"
+
+            client.download.side_effect = download
+            with mock.patch("canvas_sync.collect_course_data", return_value=data):
+                stats = canvas_sync.sync_course(
+                    client,
+                    course,
+                    vault,
+                    "https://example.test",
+                    False,
+                    True,
+                    500,
+                    True,
+                )
+
+            self.assertEqual(stats["updated"], 1)
+            self.assertEqual(existing.read_bytes(), b"new")
+            self.assertFalse((course_dir / "Canvas").exists())
+            self.assertFalse((course_dir / canvas_sync.INDEX_NAME).exists())
+
+    def test_removed_duplicate_id_does_not_archive_shared_file(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            vault = root / "vault"
+            course_dir = vault / "COURSE101"
+            existing = course_dir / "02 每周课件" / "Week 01" / "slides.pdf"
+            existing.parent.mkdir(parents=True)
+            existing.write_bytes(b"same")
+            entry = {
+                "path": "02 每周课件/Week 01/slides.pdf",
+                "display_name": "slides.pdf",
+                "updated_at": "2030-01-01T00:00:00Z",
+                "size": 4,
+            }
+            canvas_sync.write_json(
+                course_dir / canvas_sync.STATE_NAME,
+                {"files": {"1": entry, "2": entry}},
+            )
+            course = canvas_sync.Course(
+                "COURSE101",
+                123,
+                "COURSE101",
+                sync_directory=".",
+                week_directory="02 每周课件",
+                preserve_existing_paths=True,
+                generate_index=False,
+            )
+            data = (
+                {"name": "Course"},
+                [
+                    {
+                        "id": 2,
+                        "display_name": "slides.pdf",
+                        "updated_at": "2030-01-01T00:00:00Z",
+                        "size": 4,
+                        "folder_id": 10,
+                    }
+                ],
+                [{"id": 10, "full_name": "Week 01"}],
+                [],
+                [],
+                [],
+            )
+            with mock.patch("canvas_sync.collect_course_data", return_value=data):
+                stats = canvas_sync.sync_course(
+                    mock.Mock(),
+                    course,
+                    vault,
+                    "https://example.test",
+                    False,
+                    True,
+                    500,
+                    True,
+                )
+
+            self.assertEqual(stats["archived"], 0)
+            self.assertTrue(existing.exists())
 
 
 if __name__ == "__main__":

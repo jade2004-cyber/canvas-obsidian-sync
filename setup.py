@@ -346,6 +346,9 @@ def collect_settings(
         "archive_removed": True,
         "courses": courses,
     }
+    existing_layout = existing_config.get("layout")
+    if isinstance(existing_layout, dict):
+        config["layout"] = dict(existing_layout)
     details = {
         "lead_minutes": lead_minutes,
         "class_times": {

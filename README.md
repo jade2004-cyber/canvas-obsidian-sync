@@ -7,7 +7,7 @@
 ## 能做什么
 
 - 读取 Canvas 中的课程文件、作业截止日期和最近公告
-- 将文件整理到每门课程的 `Canvas/` 目录
+- 默认将文件整理到每门课程的 `Canvas/` 目录，也可直接使用已有课程目录结构
 - 根据文件名或 Canvas Module 自动归入 `Week 01`、`Week 02` 等目录
 - 生成适合 Obsidian 阅读的 `索引.md`
 - 只下载新增或更新的文件，未变化的文件会跳过
@@ -145,6 +145,23 @@ https://canvas.example.edu/courses/123456
 
 `vault_directory` 必须是 `vault_path` 下已经存在的课程目录。
 
+### 使用已有课程目录（不创建 `Canvas/` 层）
+
+如果课程文件夹已经按 `01 课程信息`、`02 每周课件/Week XX` 整理，可在配置的 `courses` 前加入：
+
+```json
+"layout": {
+  "sync_directory": ".",
+  "material_directory": "01 课程信息",
+  "week_directory": "02 每周课件",
+  "archive_directory": ".canvas-archive",
+  "preserve_existing_paths": true,
+  "generate_index": false
+},
+```
+
+此模式会把同步状态保存在课程根目录的 `.canvas-sync-state.json`，不会生成额外的 `Canvas/` 文件夹。已经追踪的文件会保留当前路径；从 Canvas 消失的文件会安全移入课程目录下隐藏的 `.canvas-archive/`。运行 `Configure.command` 时，这组设置也会被保留。
+
 ### 保存 Canvas Token
 
 在 Canvas 的个人设置中创建 Access Token。不要把 Token 写进 JSON、脚本、README 或截图。
@@ -264,7 +281,7 @@ python3 setup.py --uninstall
 - 文件改名或调整分类时，会在本地安全移动，不重复下载
 - 文件内容更新时，会下载新版本并校验大小与 SHA-256
 - 下载中断后会从临时文件继续
-- Canvas 中消失的文件会移动到 `Canvas/_Archived/YYYY-MM-DD/`
+- Canvas 中消失的文件会移入当前布局所配置的归档目录；默认是 `Canvas/_Archived/YYYY-MM-DD/`
 - 工具不会自动永久删除课程资料
 
 ## 安全说明
