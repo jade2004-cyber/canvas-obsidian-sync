@@ -42,12 +42,32 @@ Your Semester/
 
 ## 快速安装
 
-克隆仓库：
+### 不熟悉终端：双击安装
+
+1. 打开 [Releases](https://github.com/jade2004-cyber/canvas-obsidian-sync/releases/latest)
+2. 下载并解压 `canvas-obsidian-sync-v*.zip`
+3. 双击 `Install.command`
+4. 按中文提示完成设置
+
+如果 macOS 首次阻止运行，请在 Finder 中右键点击 `Install.command`，选择“打开”。不要运行来源不明或被他人修改过的副本。
+
+安装包还提供：
+
+| 文件 | 用途 |
+| --- | --- |
+| `Sync Now.command` | 立即同步全部课程 |
+| `Status.command` | 查看上次结果和下次同步时间 |
+| `Configure.command` | 修改教学期、课表、目录或课程 |
+| `Diagnostics.command` | 生成不含 Token 的诊断信息 |
+| `Update.command` | 下载新版并更新后台程序 |
+| `Uninstall.command` | 移除定时任务，保留课程资料 |
+
+### 熟悉终端：克隆仓库
 
 ```bash
 git clone https://github.com/jade2004-cyber/canvas-obsidian-sync.git
 cd canvas-obsidian-sync
-python3 setup.py
+./Install.command
 ```
 
 安装器会依次询问：
@@ -76,6 +96,19 @@ Minutes before class to sync: 45
 ```
 
 系统会在周一和周三 `08:15` 同步 `COURSE101`。
+
+## 查看状态与立即同步
+
+双击 `Status.command` 可以看到每门课的上次同步时间、结果和下一次计划时间。首次定时同步尚未发生时会显示“尚未运行”。
+
+双击 `Sync Now.command` 可以立即同步全部课程，不必等待下一节课。命令行用户也可以运行：
+
+```bash
+python3 manager.py status
+python3 canvas_sync.py
+```
+
+修改配置时双击 `Configure.command`。安装器会读取现有设置作为默认值；选择保留现有课程时，无需重新输入每一个课程 ID。
 
 ## 手动配置
 
@@ -206,6 +239,8 @@ PermissionError: [Errno 1] Operation not permitted
 这是范围较大的权限。开启前请检查脚本内容，不要使用来源不明的版本。更谨慎的选择是将 Vault 放到不受该权限限制的位置。
 
 ## 卸载自动任务
+
+双击 `Uninstall.command`，或运行：
 
 ```bash
 python3 setup.py --uninstall

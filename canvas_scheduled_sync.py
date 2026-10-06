@@ -14,7 +14,9 @@ from pathlib import Path
 
 import canvas_sync
 
-LOCK_PATH = Path("/tmp/canvas-obsidian-sync.lock")
+APP_DIR = Path(__file__).resolve().parent
+LOCK_PATH = APP_DIR / "sync.lock"
+STATUS_PATH = APP_DIR / "status.json"
 
 
 def iso_date(value: str) -> dt.date:
@@ -88,6 +90,35 @@ def send_notification(title: str, message: str) -> None:
         pass
 
 
+def record_status(
+    course: str,
+    result: str,
+    summary: dict[str, object] | None = None,
+    detail: str = "",
+) -> None:
+    try:
+        data = json.loads(STATUS_PATH.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            data = {}
+    except (OSError, json.JSONDecodeError):
+        data = {}
+    courses = data.setdefault("courses", {})
+    courses[course] = {
+        "last_run": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+        "result": result,
+        "summary": summary or {},
+        "detail": detail,
+    }
+    temporary = STATUS_PATH.with_name(f".{STATUS_PATH.name}.tmp")
+    try:
+        temporary.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        temporary.replace(STATUS_PATH)
+    except OSError:
+        temporary.unlink(missing_ok=True)
+
+
 def run_sync(course: str, config: Path, notify: bool) -> int:
     with tempfile.TemporaryDirectory(prefix="canvas-obsidian-sync-") as temporary:
         summary_path = Path(temporary) / "summary.json"
@@ -108,6 +139,7 @@ def run_sync(course: str, config: Path, notify: bool) -> int:
         if result.stderr:
             print(result.stderr, file=sys.stderr, end="")
         if result.returncode != 0:
+            record_status(course, "failed", detail=f"exit code {result.returncode}")
             if notify:
                 send_notification(
                     "Canvas sync failed",
@@ -118,6 +150,7 @@ def run_sync(course: str, config: Path, notify: bool) -> int:
         try:
             summary = json.loads(summary_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
+            record_status(course, "failed", detail="summary missing")
             if notify:
                 send_notification("Canvas sync failed", f"{course}: summary missing")
             return 1
@@ -125,6 +158,7 @@ def run_sync(course: str, config: Path, notify: bool) -> int:
             send_notification(
                 "Canvas materials updated", notification_message(course, summary)
             )
+        record_status(course, "success", summary)
         return 0
 
 

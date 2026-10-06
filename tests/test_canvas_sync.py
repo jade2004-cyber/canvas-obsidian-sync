@@ -7,6 +7,7 @@ from unittest import mock
 
 import canvas_sync
 import canvas_scheduled_sync
+import manager
 import setup
 
 
@@ -149,6 +150,9 @@ class CanvasSyncTests(unittest.TestCase):
             setup.parse_meetings("Mon 09:00, Wed 19:00"),
             [(1, 9, 0), (3, 19, 0)],
         )
+        self.assertEqual(
+            setup.parse_meetings("周一 09:00，周三 19:00"), [(1, 9, 0), (3, 19, 0)]
+        )
 
     def test_lead_time_can_cross_midnight(self):
         self.assertEqual(setup.subtract_lead_time((1, 0, 30), 45), (0, 23, 45))
@@ -172,6 +176,22 @@ class CanvasSyncTests(unittest.TestCase):
         )
         self.assertEqual(len(payload["StartCalendarInterval"]), 2)
 
+    def test_next_scheduled_run(self):
+        now = canvas_sync.dt.datetime.fromisoformat("2030-01-07T08:00:00+08:00")
+        result = manager.next_scheduled_run(
+            [[1, 8, 15], [3, 8, 15]], "2030-01-01", "2030-04-01", now
+        )
+        self.assertEqual(result.isoformat(), "2030-01-07T08:15:00+08:00")
+
+    def test_record_status_writes_course_result(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            status_path = Path(temporary) / "status.json"
+            with mock.patch("canvas_scheduled_sync.STATUS_PATH", status_path):
+                canvas_scheduled_sync.record_status("COURSE101", "success", {"new": 2})
+            status = setup.read_json(status_path)
+            self.assertEqual(status["courses"]["COURSE101"]["result"], "success")
+            self.assertEqual(status["courses"]["COURSE101"]["summary"]["new"], 2)
+
     def test_installer_does_not_load_jobs_when_validation_fails(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -189,17 +209,31 @@ class CanvasSyncTests(unittest.TestCase):
                 },
             }
             schedules = {"COURSE101": [(1, 8, 15)]}
+            details = {
+                "lead_minutes": 45,
+                "class_times": {"COURSE101": [[1, 9, 0]]},
+            }
             validation_error = subprocess.CalledProcessError(1, ["canvas_sync.py"])
+            config_path = app_dir / "canvas_courses.json"
+            config_path.parent.mkdir(parents=True)
+            config_path.write_text("original configuration", encoding="utf-8")
 
             with (
                 mock.patch("setup.platform.system", return_value="Darwin"),
                 mock.patch(
                     "setup.collect_settings",
-                    return_value=(config, schedules, "2030-01-01", "2030-04-01"),
+                    return_value=(
+                        config,
+                        schedules,
+                        "2030-01-01",
+                        "2030-04-01",
+                        details,
+                    ),
                 ),
                 mock.patch("setup.ensure_keychain_token"),
                 mock.patch("setup.is_inside", return_value=False),
                 mock.patch("setup.APP_DIR", app_dir),
+                mock.patch("setup.CONFIG_PATH", config_path),
                 mock.patch("setup.LOG_DIR", root / "logs"),
                 mock.patch("setup.LAUNCH_AGENTS", launch_agents),
                 mock.patch("setup.MANIFEST", app_dir / "install-manifest.json"),
@@ -210,6 +244,70 @@ class CanvasSyncTests(unittest.TestCase):
                     setup.install()
 
             launchctl.assert_not_called()
+            self.assertEqual(
+                config_path.read_text(encoding="utf-8"), "original configuration"
+            )
+            self.assertFalse((app_dir / ".canvas_courses.candidate.json").exists())
+
+    def test_successful_install_writes_v2_manifest(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            app_dir = root / "app"
+            config_path = app_dir / "canvas_courses.json"
+            manifest_path = app_dir / "install-manifest.json"
+            launch_agents = root / "agents"
+            config = {
+                "base_url": "https://example.test",
+                "keychain_service": "test-service",
+                "vault_path": str(root / "vault"),
+                "courses": {
+                    "COURSE101": {
+                        "canvas_id": 123,
+                        "vault_directory": "COURSE101",
+                    }
+                },
+            }
+            schedules = {"COURSE101": [(1, 8, 15)]}
+            details = {
+                "lead_minutes": 45,
+                "class_times": {"COURSE101": [[1, 9, 0]]},
+            }
+
+            with (
+                mock.patch("setup.platform.system", return_value="Darwin"),
+                mock.patch(
+                    "setup.collect_settings",
+                    return_value=(
+                        config,
+                        schedules,
+                        "2030-01-01",
+                        "2030-04-01",
+                        details,
+                    ),
+                ),
+                mock.patch("setup.ensure_keychain_token"),
+                mock.patch("setup.is_inside", return_value=False),
+                mock.patch("setup.APP_DIR", app_dir),
+                mock.patch("setup.LOG_DIR", root / "logs"),
+                mock.patch("setup.LAUNCH_AGENTS", launch_agents),
+                mock.patch("setup.MANIFEST", manifest_path),
+                mock.patch("setup.CONFIG_PATH", config_path),
+                mock.patch(
+                    "setup.subprocess.run",
+                    return_value=subprocess.CompletedProcess([], 0),
+                ),
+                mock.patch("setup.launchctl") as launchctl,
+            ):
+                setup.install()
+
+            manifest = setup.read_json(manifest_path)
+            self.assertEqual(manifest["version"], 2)
+            self.assertEqual(manifest["lead_minutes"], 45)
+            self.assertEqual(
+                manifest["courses"]["COURSE101"]["intervals"], [[1, 8, 15]]
+            )
+            self.assertEqual(setup.read_json(config_path)["courses"], config["courses"])
+            self.assertTrue(launchctl.called)
 
     def test_sync_moves_renamed_file_without_downloading(self):
         with tempfile.TemporaryDirectory() as temporary:
