@@ -1,7 +1,9 @@
 import hashlib
+import socket
 import subprocess
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest import mock
 
@@ -85,6 +87,33 @@ class CanvasSyncTests(unittest.TestCase):
     def test_retry_delay_caps_server_value(self):
         error = canvas_sync.TransientCanvasError("limited", retry_after=999)
         self.assertEqual(canvas_sync.retry_delay(error, 0), 120)
+
+    def test_dns_lookup_failure_is_retryable(self):
+        client = canvas_sync.CanvasClient("https://example.test", "token")
+        error = urllib.error.URLError(
+            socket.gaierror(8, "nodename nor servname provided, or not known")
+        )
+        with (
+            mock.patch.object(client._opener, "open", side_effect=error),
+            self.assertRaises(canvas_sync.TransientCanvasError),
+        ):
+            client._open("https://example.test/api/v1/courses")
+
+    def test_json_request_recovers_after_temporary_dns_failure(self):
+        client = canvas_sync.CanvasClient("https://example.test", "token")
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = b'{"ok": true}'
+        response.__enter__.return_value.headers.get.return_value = ""
+        dns_error = canvas_sync.TransientCanvasError("Temporary DNS failure")
+
+        with (
+            mock.patch.object(client, "_open", side_effect=[dns_error, response]),
+            mock.patch("canvas_sync.time.sleep") as sleep,
+        ):
+            payload = client.get_json("/api/v1/test")
+
+        self.assertEqual(payload, {"ok": True})
+        sleep.assert_called_once_with(1.0)
 
     def test_download_promotes_already_complete_temporary_file(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -195,6 +224,14 @@ class CanvasSyncTests(unittest.TestCase):
             status = setup.read_json(status_path)
             self.assertEqual(status["courses"]["COURSE101"]["result"], "success")
             self.assertEqual(status["courses"]["COURSE101"]["summary"]["new"], 2)
+
+    def test_failure_detail_uses_final_stderr_line(self):
+        result = subprocess.CompletedProcess(
+            [], 1, stdout="", stderr="retrying\nError: DNS unavailable\n"
+        )
+        self.assertEqual(
+            canvas_scheduled_sync.failure_detail(result), "Error: DNS unavailable"
+        )
 
     def test_installer_does_not_load_jobs_when_validation_fails(self):
         with tempfile.TemporaryDirectory() as temporary:

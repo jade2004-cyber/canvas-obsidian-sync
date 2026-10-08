@@ -32,9 +32,9 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = SCRIPT_DIR / "canvas_courses.json"
 STATE_NAME = ".canvas-sync-state.json"
 INDEX_NAME = "索引.md"
-USER_AGENT = "canvas-obsidian-read-only-sync/0.2.1"
+USER_AGENT = "canvas-obsidian-read-only-sync/0.2.2"
 LOCAL_TZ = dt.datetime.now().astimezone().tzinfo or dt.timezone.utc
-MAX_ATTEMPTS = 5
+MAX_ATTEMPTS = 8
 RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
 
 
@@ -164,6 +164,7 @@ class CanvasClient:
                 (
                     TimeoutError,
                     socket.timeout,
+                    socket.gaierror,
                     ssl.SSLError,
                     ConnectionResetError,
                     http.client.RemoteDisconnected,
@@ -199,7 +200,7 @@ class CanvasClient:
             ) as exc:
                 if attempt == MAX_ATTEMPTS - 1:
                     raise SyncError(
-                        f"Canvas request failed after {MAX_ATTEMPTS} attempts"
+                        f"Canvas request failed after {MAX_ATTEMPTS} attempts: {exc}"
                     ) from exc
                 transient = (
                     exc
@@ -308,7 +309,7 @@ class CanvasClient:
             ) as exc:
                 if attempt == MAX_ATTEMPTS - 1:
                     raise SyncError(
-                        f"Download failed after {MAX_ATTEMPTS} attempts"
+                        f"Download failed after {MAX_ATTEMPTS} attempts: {exc}"
                     ) from exc
                 transient = (
                     exc

@@ -119,6 +119,13 @@ def record_status(
         temporary.unlink(missing_ok=True)
 
 
+def failure_detail(result: subprocess.CompletedProcess[str]) -> str:
+    lines = [line.strip() for line in result.stderr.splitlines() if line.strip()]
+    if lines:
+        return lines[-1][:500]
+    return f"exit code {result.returncode}"
+
+
 def run_sync(course: str, config: Path, notify: bool) -> int:
     with tempfile.TemporaryDirectory(prefix="canvas-obsidian-sync-") as temporary:
         summary_path = Path(temporary) / "summary.json"
@@ -139,11 +146,12 @@ def run_sync(course: str, config: Path, notify: bool) -> int:
         if result.stderr:
             print(result.stderr, file=sys.stderr, end="")
         if result.returncode != 0:
-            record_status(course, "failed", detail=f"exit code {result.returncode}")
+            detail = failure_detail(result)
+            record_status(course, "failed", detail=detail)
             if notify:
                 send_notification(
                     "Canvas sync failed",
-                    f"{course}: check the sync error log",
+                    f"{course}: {detail}",
                 )
             return result.returncode
 

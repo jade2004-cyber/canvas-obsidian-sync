@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-VERSION = "0.2.1"
+VERSION = "0.2.2"
 APP_DIR = Path.home() / "Library" / "Application Support" / "CanvasObsidianSync"
 LOG_DIR = Path.home() / "Library" / "Logs" / "CanvasObsidianSync"
 CONFIG_PATH = APP_DIR / "canvas_courses.json"

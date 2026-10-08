@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2
+
+- Retry temporary DNS lookup failures instead of exiting immediately
+- Extend network recovery attempts so a sync can continue after macOS dark wake
+- Show the actual final error in status and failure notifications
+
 ## 0.2.1
 
 - Add an optional layout mode that syncs directly into existing course folders

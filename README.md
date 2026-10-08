@@ -12,6 +12,7 @@
 - 生成适合 Obsidian 阅读的 `索引.md`
 - 只下载新增或更新的文件，未变化的文件会跳过
 - 支持断点续传、大小限制、完整性校验和 Canvas 限流重试
+- 睡眠暗唤醒时若 DNS 尚未恢复，会等待网络并自动重试
 - Canvas 中删除的文件不会直接从本地删除，而会移入 `_Archived/`
 - 使用 macOS Keychain 保存 API Token
 - 通过 LaunchAgent 在课前自动运行
